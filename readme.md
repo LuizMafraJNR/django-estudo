@@ -364,3 +364,323 @@ Agora a aplicação `polls` aparecerá no site de administração! Você pode:
 - A página oferece opções de salvar, continuar editando, deletar, etc.
 - Histórico de alterações é mantido automaticamente
 
+---
+
+# Escrevendo sua primeira aplicação Django, parte 3
+
+## Visão Geral
+
+Este tutorial inicia onde o Tutorial 2 termina. Vamos nos concentrar em criar a interface pública — as "views".
+
+## O que é uma View?
+
+Uma **view** é um "tipo" de página web em sua aplicação Django que geralmente serve uma função específica e tem um template específico.
+
+Por exemplo, em uma aplicação de blog, você teria:
+
+- **Página inicial** – exibe os artigos mais recentes
+- **Página de detalhe** – página de um único artigo
+- **Página de arquivo por ano** – exibe todos os meses com artigos de um determinado ano
+- **Página de arquivo por mês** – exibe todos os dias com artigos de um determinado mês
+- **Ação de comentários** – controla o envio de comentários para um artigo
+
+### Views da Aplicação de Enquetes
+
+Em nossa aplicação, teremos as seguintes views:
+
+- **Página de "índice"** – exibe as enquetes mais recentes
+- **Página de "detalhe"** – exibe o texto da pergunta com um formulário para votar
+- **Página de "resultados"** – exibe os resultados de uma pergunta em particular
+- **Ação de voto** – gerencia a votação para uma escolha particular
+
+## URLconfs (Configuração de URLs)
+
+Em Django, as páginas web são entregues por views. O Django escolhe qual view executar examinando a **URL solicitada**.
+
+Uma **URL pattern** é a forma geral de uma URL — por exemplo: `/polls/<year>/<month>/`.
+
+Django usa **URLconfs** para mapear padrões de URL para views.
+
+## Escrevendo Views
+
+### Primeiro, Adicione Imports à View
+
+Edite `polls/views.py` adicionando as views básicas:
+
+```python
+from django.http import HttpResponse
+from django.shortcuts import render, get_object_or_404
+from .models import Question
+
+def index(request):
+    latest_question_list = Question.objects.order_by("-pub_date")[:5]
+    context = {"latest_question_list": latest_question_list}
+    return render(request, "polls/index.html", context)
+
+def detail(request, question_id):
+    question = get_object_or_404(Question, pk=question_id)
+    return render(request, "polls/detail.html", {"question": question})
+
+def results(request, question_id):
+    question = get_object_or_404(Question, pk=question_id)
+    return render(request, "polls/results.html", {"question": question})
+
+def vote(request, question_id):
+    question = get_object_or_404(Question, pk=question_id)
+    # Implementação da lógica de votação aqui
+    return HttpResponse("You're voting on question %s." % question_id)
+```
+
+### Conectar as Views à URLs
+
+Crie um arquivo `polls/urls.py`:
+
+```python
+from django.urls import path
+from . import views
+
+app_name = "polls"
+urlpatterns = [
+    # ex: /polls/
+    path("", views.index, name="index"),
+    # ex: /polls/5/
+    path("<int:question_id>/", views.detail, name="detail"),
+    # ex: /polls/5/results/
+    path("<int:question_id>/results/", views.results, name="results"),
+    # ex: /polls/5/vote/
+    path("<int:question_id>/vote/", views.vote, name="vote"),
+]
+```
+
+### Incluir URLs do App no Projeto
+
+Edite `projeto/urls.py`:
+
+```python
+from django.contrib import admin
+from django.urls import include, path
+
+urlpatterns = [
+    path("polls/", include("polls.urls")),
+    path("admin/", admin.site.urls),
+]
+```
+
+## Entendendo os Padrões de URL
+
+Quando alguém solicita uma página como `/polls/34/`, Django:
+
+1. Carrega `projeto/urls.py`
+2. Encontra a correspondência com `'polls/'`
+3. Remove a parte correspondente e envia `'34/'` para o URLconf de `polls`
+4. Lá encontra `<int:question_id>/`
+5. Chama `views.detail(request=<HttpRequest>, question_id=34)`
+
+### Conversores de Tipos de URL
+
+- `<int:question_id>` – captura números inteiros
+- `<str:name>` – captura strings
+- `<slug:slug>` – captura slugs
+- `<uuid:uuid>` – captura UUIDs
+
+## Templates
+
+### Criando a Estrutura de Templates
+
+Crie os seguintes diretórios:
+
+```
+polls/
+  templates/
+    polls/
+      index.html
+      detail.html
+      results.html
+```
+
+### Template: index.html
+
+Crie `polls/templates/polls/index.html`:
+
+```html
+{% if latest_question_list %}
+    <ul>
+    {% for question in latest_question_list %}
+        <li><a href="{% url 'polls:detail' question.id %}">{{ question.question_text }}</a></li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>Nenhuma enquete disponível.</p>
+{% endif %}
+```
+
+### Template: detail.html
+
+Crie `polls/templates/polls/detail.html`:
+
+```html
+<h1>{{ question.question_text }}</h1>
+
+{% if error_message %}<p><strong>{{ error_message }}</strong></p>{% endif %}
+
+<form action="{% url 'polls:vote' question.id %}" method="post">
+{% csrf_token %}
+{% for choice in question.choice_set.all %}
+    <input type="radio" name="choice" id="choice{{ forloop.counter }}" value="{{ choice.id }}">
+    <label for="choice{{ forloop.counter }}">{{ choice.choice_text }}</label><br>
+{% endfor %}
+<input type="submit" value="Votar">
+</form>
+```
+
+### Template: results.html
+
+Crie `polls/templates/polls/results.html`:
+
+```html
+<h1>{{ question.question_text }}</h1>
+
+<ul>
+{% for choice in question.choice_set.all %}
+    <li>{{ choice.choice_text }} -- {{ choice.votes }} vote{{ choice.votes|pluralize }}</li>
+{% endfor %}
+</ul>
+
+<a href="{% url 'polls:index' %}">Voltar para as enquetes</a>
+```
+
+## Tratando Erros com Http404
+
+Se uma pergunta não existir, você pode lançar uma exceção `Http404`:
+
+```python
+from django.http import Http404
+from django.shortcuts import render
+from .models import Question
+
+def detail(request, question_id):
+    try:
+        question = Question.objects.get(pk=question_id)
+    except Question.DoesNotExist:
+        raise Http404("Pergunta não existe")
+    return render(request, "polls/detail.html", {"question": question})
+```
+
+### Atalho: get_object_or_404()
+
+Uma forma mais limpa é usar o atalho `get_object_or_404()`:
+
+```python
+from django.shortcuts import get_object_or_404, render
+from .models import Question
+
+def detail(request, question_id):
+    question = get_object_or_404(Question, pk=question_id)
+    return render(request, "polls/detail.html", {"question": question})
+```
+
+## Sistema de Templates do Django
+
+### Sintaxe de Templates
+
+O sistema de templates Django usa uma sintaxe separada por pontos para acessar atributos:
+
+```django
+{{ question.question_text }}  <!-- Acessa o atributo question_text -->
+
+{% for choice in question.choice_set.all %}
+    {{ choice.choice_text }}
+{% endfor %}
+```
+
+### Loops e Condicionais
+
+```django
+{% if latest_question_list %}
+    <ul>
+    {% for question in latest_question_list %}
+        <li>{{ question.question_text }}</li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>Nenhuma enquete disponível.</p>
+{% endif %}
+```
+
+## Removendo URLs Codificadas
+
+### O Problema
+
+Quando você escreve links em templates como:
+
+```html
+<a href="/polls/{{ question.id }}/">{{ question.question_text }}</a>
+```
+
+Fica difícil mudar as URLs depois. Se você alterar o padrão em `urls.py`, todos os templates precisarão ser atualizados.
+
+### A Solução: Tag {% url %}
+
+Use a tag de template `{% url %}` para referenciar as views pelo seu nome:
+
+```html
+<a href="{% url 'polls:detail' question.id %}">{{ question.question_text }}</a>
+```
+
+Agora, se você mudar o padrão de URL em `urls.py`:
+
+```python
+# Antes
+path("<int:question_id>/", views.detail, name="detail"),
+
+# Depois
+path("specifics/<int:question_id>/", views.detail, name="detail"),
+```
+
+Os templates **não precisarão de alterações!**
+
+## Namespacing de URLs
+
+### Por Que Usar Namespaces?
+
+Em um projeto real, você pode ter múltiplas aplicações. Cada uma pode ter views com nomes similares (como `detail`). Os namespaces evitam conflitos.
+
+### Configurando um Namespace
+
+No arquivo `polls/urls.py`, adicione `app_name`:
+
+```python
+from django.urls import path
+from . import views
+
+app_name = "polls"
+
+urlpatterns = [
+    path("", views.index, name="index"),
+    path("<int:question_id>/", views.detail, name="detail"),
+    path("<int:question_id>/results/", views.results, name="results"),
+    path("<int:question_id>/vote/", views.vote, name="vote"),
+]
+```
+
+### Usando Namespaces em Templates
+
+Agora use a sintaxe `app_name:view_name`:
+
+```html
+<!-- Antes -->
+<a href="{% url 'detail' question.id %}">{{ question.question_text }}</a>
+
+<!-- Depois -->
+<a href="{% url 'polls:detail' question.id %}">{{ question.question_text }}</a>
+```
+
+## Próximos Passos
+
+Quando se sentir confortável com as views, você pode aprender sobre:
+
+- Processamento de formulários
+- Generic views (atalhos para views comuns)
+- Autenticação e permissões
+- Testes automáticos
+
